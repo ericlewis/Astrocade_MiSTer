@@ -258,10 +258,13 @@ wire clk_cpu_en = clk_cpu_ct[0];
 // ========================================================================
 
 reg [19:0] reset_counter = 20'd300000;
-wire reset = |reset_counter | ioctl_download;
+wire reset = |reset_counter | downloading;
 
 always @(posedge clk_sys)
-    if (reset_counter) reset_counter <= reset_counter - 1'd1;
+    if (downloading)
+        reset_counter <= 20'd300000;
+    else if (reset_counter)
+        reset_counter <= reset_counter - 1'd1;
 
 // ========================================================================
 //  Video — dedicated pixel clock, no skip
@@ -440,7 +443,7 @@ wire        bios_wr;
 wire [27:0] bios_addr;
 wire  [7:0] bios_data_dl;
 
-data_loader #(.ADDRESS_MASK_UPPER_4(4'h0), .ADDRESS_SIZE(28)) bios_loader (
+data_loader #(.ADDRESS_MASK_UPPER_4(4'h2), .ADDRESS_SIZE(28)) bios_loader (
     .clk_74a(clk_74a), .clk_memory(clk_sys),
     .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
     .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
@@ -452,7 +455,7 @@ wire        cart_wr_dl;
 wire [27:0] cart_addr_dl;
 wire  [7:0] cart_data_dl;
 
-data_loader #(.ADDRESS_MASK_UPPER_4(4'h1), .ADDRESS_SIZE(28)) cart_loader (
+data_loader #(.ADDRESS_MASK_UPPER_4(4'h3), .ADDRESS_SIZE(28)) cart_loader (
     .clk_74a(clk_74a), .clk_memory(clk_sys),
     .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
     .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
