@@ -6,16 +6,18 @@
         "id": 0,
         "name": "BIOS",
         "required": true,
-        "parameters": "0x20000000",
+        "parameters": "0x1",
         "extensions": ["bin", "rom"],
-        "filename": "astrocade.rom"
+        "filename": "astrocade.rom",
+        "address": "0x20000000"
       },
       {
         "id": 1,
         "name": "Cartridge",
         "required": false,
-        "parameters": "0x30000000",
-        "extensions": ["bin", "rom"]
+        "parameters": "0x1",
+        "extensions": ["bin", "rom"],
+        "address": "0x30000000"
       }
     ]
   }
