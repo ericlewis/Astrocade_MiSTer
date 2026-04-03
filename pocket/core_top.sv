@@ -274,28 +274,58 @@ assign video_rgb_clock    = clk_vid;
 assign video_rgb_clock_90 = clk_vid_90;
 assign video_skip = 1'b0;
 
-// Blanking (from Astrocade.sv)
-reg [15:0] vsync_ct, hsync_ct;
-reg        HSync_r, VSync_r;
-wire       VBlank_w = (vsync_ct < 25) || (vsync_ct > 254);
-wire       HBlank_w = (hsync_ct >= 214) || (hsync_ct < 34);
+// 2MHz clock enable from 14.318 MHz (div by ~7)
+reg ce_2m;
+reg [2:0] div_2m;
+always @(posedge clk_sys) begin
+    div_2m <= div_2m + 1'd1;
+    if (div_2m == 6) div_2m <= 0;
+    ce_2m <= (div_2m == 0);
+end
 
-// Pixel counter and sync edge detect at pixel clock rate
-always @(posedge clk_vid) begin
-    hsync_ct <= hsync_ct + 1'd1;
-    HSync_r <= hs;
-    if (~HSync_r & hs) begin
-        vsync_ct <= vsync_ct + 1'd1;
-        hsync_ct <= 0;
-        VSync_r <= vs;
-        if (~VSync_r & vs) vsync_ct <= 0;
+// Blanking counters at clk_sys with ce_2m (matching MiSTer)
+reg [15:0] vsync_ct, hsync_ct;
+reg        HBlank, VBlank_r;
+
+always @(posedge clk_sys) begin
+    reg old_hs, old_vs;
+    if (ce_2m) begin
+        hsync_ct <= hsync_ct + 1'd1;
+        old_hs <= hs;
+        if (old_hs & ~hs) begin
+            hsync_ct <= 0;
+            vsync_ct <= vsync_ct + 1'd1;
+            old_vs <= vs;
+            if (old_vs & ~vs) vsync_ct <= 0;
+        end
+        if (hsync_ct == 21)  HBlank <= 0;
+        if (hsync_ct == 100) HBlank <= 1;
+        if (vsync_ct == 34)  VBlank_r <= 0;
+        if (vsync_ct == 240) VBlank_r <= 1;
     end
 end
 
-assign video_rgb = (~HBlank_w & ~VBlank_w) ? {R, 4'd0, G, 4'd0, B, 4'd0} : 24'd0;
-assign video_de  = ~HBlank_w & ~VBlank_w;
-assign video_vs  = VSync_r;
-assign video_hs  = HSync_r;
+// Register video into clk_vid domain
+reg [7:0] vid_r, vid_g, vid_b;
+reg       vid_hs, vid_vs, vid_de;
+
+always @(posedge clk_vid) begin
+    vid_de <= ~HBlank & ~VBlank_r;
+    vid_hs <= !hs; // hs from BALLY is active low
+    vid_vs <= !vs;
+    if (~HBlank & ~VBlank_r) begin
+        vid_r <= {R, R};
+        vid_g <= {G, G};
+        vid_b <= {B, B};
+    end else begin
+        vid_r <= 0; vid_g <= 0; vid_b <= 0;
+    end
+end
+
+assign video_rgb = {vid_r, vid_g, vid_b};
+assign video_de  = vid_de;
+assign video_vs  = vid_vs;
+assign video_hs  = vid_hs;
 
 // ========================================================================
 //  Audio — 8-bit mono → I2S

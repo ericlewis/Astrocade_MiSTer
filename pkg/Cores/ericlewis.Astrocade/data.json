@@ -13,8 +13,8 @@
       },
       {
         "id": 1,
-        "name": "Cartridge",
-        "required": false,
+        "name": "Load Game",
+        "required": true,
         "parameters": "0x1",
         "extensions": ["bin", "rom"],
         "address": "0x30000000"
