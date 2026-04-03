@@ -350,7 +350,7 @@ wire [12:0] cart_addr;
 wire  [7:0] cart_di, cart_do;
 wire        cart_rd;
 
-wire [12:0] bios_addr;
+wire [12:0] bios_addr_core;
 wire  [7:0] bios_do;
 wire        bios_rd;
 
@@ -374,7 +374,7 @@ BALLY bally (
     .O_CAS_DATA    (cart_di),
     .I_CAS_DATA    (cart_do),
     .O_CAS_CS_L    (cart_rd),
-    .O_BIOS_ADDR   (bios_addr),
+    .O_BIOS_ADDR   (bios_addr_core),
     .O_BIOS_CS_L   (bios_rd),
     .I_BIOS_DATA   (bios_do),
     .O_EXP_ADDR    (),
@@ -428,93 +428,62 @@ wire [7:0] pot_data =
 //  ROM / BIOS (dual-port RAM, loaded via ioctl)
 // ========================================================================
 
-// ioctl signals from data slot loading
-reg        ioctl_download = 0;
-reg        ioctl_wr = 0;
-reg [12:0] ioctl_addr;
-reg  [7:0] ioctl_dout;
-reg  [7:0] ioctl_index;
-
-// Bridge write capture for ROM loading (clk_74a domain)
-// Unpacks 32-bit big-endian bridge words to bytes
-reg        dl_active_74 = 0;
-reg [12:0] dl_addr_74 = 0;
-reg  [7:0] dl_data_74;
-reg        dl_wr_74 = 0;
-reg  [7:0] dl_index_74;
-reg  [1:0] dl_unpack = 0;
-reg [31:0] dl_word;
-reg [12:0] dl_base;
-
+// ROM loading via data_loader (agg23 utility)
+// Slot 0 (BIOS) loads at 0x0xxxxxxx, Slot 1 (cart) at 0x1xxxxxxx
 always @(posedge clk_74a) begin
-    dl_wr_74 <= 0;
-    target_dataslot_read <= 0;
-    target_dataslot_write <= 0;
-    target_dataslot_getfile <= 0;
-    target_dataslot_openfile <= 0;
-
-    if (dataslot_requestread) begin
-        dl_active_74 <= 1;
-        dl_addr_74 <= 0;
-        dl_index_74 <= dataslot_requestread_id[7:0];
-    end
-
-    // Capture and unpack 32-bit words to bytes (big-endian)
-    if (bridge_wr && dl_active_74 && bridge_addr[31:28] != 4'hF && bridge_addr[31:28] != 4'h0) begin
-        dl_data_74 <= bridge_wr_data[31:24];
-        dl_wr_74   <= 1;
-        dl_word    <= bridge_wr_data;
-        dl_base    <= dl_addr_74;
-        dl_unpack  <= 2'd1;
-        dl_addr_74 <= dl_addr_74 + 1'd1;
-    end
-    else if (dl_unpack != 0) begin
-        dl_wr_74 <= 1;
-        dl_addr_74 <= dl_base + {11'd0, dl_unpack};
-        case (dl_unpack)
-            2'd1: dl_data_74 <= dl_word[23:16];
-            2'd2: dl_data_74 <= dl_word[15:8];
-            2'd3: dl_data_74 <= dl_word[7:0];
-        endcase
-        dl_unpack <= (dl_unpack == 2'd3) ? 2'd0 : dl_unpack + 1'd1;
-        if (dl_unpack == 2'd3) dl_addr_74 <= dl_base + 13'd4;
-    end
-
-    if (dataslot_allcomplete) dl_active_74 <= 0;
+    target_dataslot_read <= 0; target_dataslot_write <= 0;
+    target_dataslot_getfile <= 0; target_dataslot_openfile <= 0;
 end
 
-// Cross to clk_sys
-reg [2:0] dl_wr_sync;
-reg       dl_dl_s0, dl_dl_s1;
-always @(posedge clk_sys) begin
-    dl_wr_sync <= {dl_wr_sync[1:0], dl_wr_74};
-    dl_dl_s0 <= dl_active_74;
-    dl_dl_s1 <= dl_dl_s0;
-    ioctl_wr <= 0;
-    if (dl_wr_sync[1] & ~dl_wr_sync[2]) begin
-        ioctl_wr   <= 1;
-        ioctl_dout <= dl_data_74;
-        ioctl_addr <= dl_addr_74 - 1'd1;
-    end
-    ioctl_download <= dl_dl_s1;
-    ioctl_index    <= dl_index_74;
-end
+// BIOS loader (address mask 0x0)
+wire        bios_wr;
+wire [27:0] bios_addr;
+wire  [7:0] bios_data_dl;
 
-// Cartridge ROM (8KB)
+data_loader #(.ADDRESS_MASK_UPPER_4(4'h0), .ADDRESS_SIZE(28)) bios_loader (
+    .clk_74a(clk_74a), .clk_memory(clk_sys),
+    .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
+    .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
+    .write_en(bios_wr), .write_addr(bios_addr), .write_data(bios_data_dl)
+);
+
+// Cart loader (address mask 0x1)
+wire        cart_wr_dl;
+wire [27:0] cart_addr_dl;
+wire  [7:0] cart_data_dl;
+
+data_loader #(.ADDRESS_MASK_UPPER_4(4'h1), .ADDRESS_SIZE(28)) cart_loader (
+    .clk_74a(clk_74a), .clk_memory(clk_sys),
+    .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
+    .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
+    .write_en(cart_wr_dl), .write_addr(cart_addr_dl), .write_data(cart_data_dl)
+);
+
+// Track download state
+reg ioctl_download = 0;
+always @(posedge clk_74a) begin
+    if (dataslot_requestwrite) ioctl_download <= 1;
+    if (dataslot_allcomplete)  ioctl_download <= 0;
+end
+reg dl_s0, dl_s1;
+always @(posedge clk_sys) begin dl_s0 <= ioctl_download; dl_s1 <= dl_s0; end
+wire downloading = dl_s1;
+
+// Cartridge ROM (8KB) — loaded from slot 1 via cart_loader
 dpram #(13) rom (
     .clock     (clk_sys),
-    .address_a (ioctl_download ? ioctl_addr[12:0] : cart_addr),
-    .data_a    (ioctl_dout),
-    .wren_a    (ioctl_wr && (ioctl_index == 8'd1)),
+    .address_a (downloading ? cart_addr_dl[12:0] : cart_addr),
+    .data_a    (cart_data_dl),
+    .wren_a    (cart_wr_dl),
     .q_a       (cart_do)
 );
 
-// BIOS ROM (8KB)
+// BIOS ROM (8KB) — loaded from slot 0 via bios_loader
 dpram #(13) bios (
     .clock     (clk_sys),
-    .address_a (ioctl_download ? ioctl_addr[12:0] : bios_addr),
-    .data_a    (ioctl_dout),
-    .wren_a    (ioctl_wr && (ioctl_index == 8'd0)),
+    .address_a (downloading ? bios_addr[12:0] : bios_addr_core),
+    .data_a    (bios_data_dl),
+    .wren_a    (bios_wr),
     .q_a       (bios_do)
 );
 
