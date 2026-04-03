@@ -436,11 +436,15 @@ reg  [7:0] ioctl_dout;
 reg  [7:0] ioctl_index;
 
 // Bridge write capture for ROM loading (clk_74a domain)
+// Unpacks 32-bit big-endian bridge words to bytes
 reg        dl_active_74 = 0;
 reg [12:0] dl_addr_74 = 0;
 reg  [7:0] dl_data_74;
 reg        dl_wr_74 = 0;
 reg  [7:0] dl_index_74;
+reg  [1:0] dl_unpack = 0;
+reg [31:0] dl_word;
+reg [12:0] dl_base;
 
 always @(posedge clk_74a) begin
     dl_wr_74 <= 0;
@@ -452,14 +456,28 @@ always @(posedge clk_74a) begin
     if (dataslot_requestread) begin
         dl_active_74 <= 1;
         dl_addr_74 <= 0;
-        dl_index_74 <= dataslot_requestread_id[7:0]; // slot 0 = BIOS, slot 1 = cart
+        dl_index_74 <= dataslot_requestread_id[7:0];
     end
 
-    // Capture bridge writes at 0x20xxxxxx during download
-    if (bridge_wr && bridge_addr[31:24] == 8'h20 && dl_active_74) begin
-        dl_data_74 <= bridge_wr_data[7:0];
-        dl_wr_74 <= 1;
+    // Capture and unpack 32-bit words to bytes (big-endian)
+    if (bridge_wr && dl_active_74 && bridge_addr[31:28] != 4'hF && bridge_addr[31:28] != 4'h0) begin
+        dl_data_74 <= bridge_wr_data[31:24];
+        dl_wr_74   <= 1;
+        dl_word    <= bridge_wr_data;
+        dl_base    <= dl_addr_74;
+        dl_unpack  <= 2'd1;
         dl_addr_74 <= dl_addr_74 + 1'd1;
+    end
+    else if (dl_unpack != 0) begin
+        dl_wr_74 <= 1;
+        dl_addr_74 <= dl_base + {11'd0, dl_unpack};
+        case (dl_unpack)
+            2'd1: dl_data_74 <= dl_word[23:16];
+            2'd2: dl_data_74 <= dl_word[15:8];
+            2'd3: dl_data_74 <= dl_word[7:0];
+        endcase
+        dl_unpack <= (dl_unpack == 2'd3) ? 2'd0 : dl_unpack + 1'd1;
+        if (dl_unpack == 2'd3) dl_addr_74 <= dl_base + 13'd4;
     end
 
     if (dataslot_allcomplete) dl_active_74 <= 0;
