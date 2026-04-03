@@ -462,35 +462,27 @@ wire [7:0] pot_data =
 // ========================================================================
 
 // ROM loading via data_loader (agg23 utility)
-// Slot 0 (BIOS) loads at 0x0xxxxxxx, Slot 1 (cart) at 0x1xxxxxxx
+// Single slot: user provides concatenated BIOS(8KB) + Cart(8KB) file
+// First 8KB → BIOS dpram, remaining → Cart dpram
 always @(posedge clk_74a) begin
     target_dataslot_read <= 0; target_dataslot_write <= 0;
     target_dataslot_getfile <= 0; target_dataslot_openfile <= 0;
 end
 
-// BIOS loader (address mask 0x0)
-wire        bios_wr;
-wire [27:0] bios_addr;
-wire  [7:0] bios_data_dl;
+wire        dl_wr;
+wire [27:0] dl_addr;
+wire  [7:0] dl_data;
 
-data_loader #(.ADDRESS_MASK_UPPER_4(4'h2), .ADDRESS_SIZE(28)) bios_loader (
+data_loader #(.ADDRESS_MASK_UPPER_4(4'h2), .ADDRESS_SIZE(28)) rom_loader (
     .clk_74a(clk_74a), .clk_memory(clk_sys),
     .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
     .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
-    .write_en(bios_wr), .write_addr(bios_addr), .write_data(bios_data_dl)
+    .write_en(dl_wr), .write_addr(dl_addr), .write_data(dl_data)
 );
 
-// Cart loader (address mask 0x1)
-wire        cart_wr_dl;
-wire [27:0] cart_addr_dl;
-wire  [7:0] cart_data_dl;
-
-data_loader #(.ADDRESS_MASK_UPPER_4(4'h3), .ADDRESS_SIZE(28)) cart_loader (
-    .clk_74a(clk_74a), .clk_memory(clk_sys),
-    .bridge_wr(bridge_wr), .bridge_endian_little(bridge_endian_little),
-    .bridge_addr(bridge_addr), .bridge_wr_data(bridge_wr_data),
-    .write_en(cart_wr_dl), .write_addr(cart_addr_dl), .write_data(cart_data_dl)
-);
+// Route by address: 0x0000-0x1FFF = BIOS, 0x2000+ = cart
+wire bios_wr_en = dl_wr & (dl_addr < 28'h2000);
+wire cart_wr_en = dl_wr & (dl_addr >= 28'h2000);
 
 // Track download state
 reg ioctl_download = 0;
@@ -502,21 +494,21 @@ reg dl_s0, dl_s1;
 always @(posedge clk_sys) begin dl_s0 <= ioctl_download; dl_s1 <= dl_s0; end
 wire downloading = dl_s1;
 
-// Cartridge ROM (8KB) — loaded from slot 1 via cart_loader
+// Cartridge ROM (8KB)
 dpram #(13) rom (
     .clock     (clk_sys),
-    .address_a (downloading ? cart_addr_dl[12:0] : cart_addr),
-    .data_a    (cart_data_dl),
-    .wren_a    (cart_wr_dl),
+    .address_a (downloading ? dl_addr[12:0] : cart_addr),
+    .data_a    (dl_data),
+    .wren_a    (cart_wr_en),
     .q_a       (cart_do)
 );
 
-// BIOS ROM (8KB) — loaded from slot 0 via bios_loader
+// BIOS ROM (8KB)
 dpram #(13) bios (
     .clock     (clk_sys),
-    .address_a (downloading ? bios_addr[12:0] : bios_addr_core),
-    .data_a    (bios_data_dl),
-    .wren_a    (bios_wr),
+    .address_a (downloading ? dl_addr[12:0] : bios_addr_core),
+    .data_a    (dl_data),
+    .wren_a    (bios_wr_en),
     .q_a       (bios_do)
 );
 
