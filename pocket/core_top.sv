@@ -274,55 +274,21 @@ assign video_rgb_clock    = clk_vid;
 assign video_rgb_clock_90 = clk_vid_90;
 assign video_skip = 1'b0;
 
-// 2MHz clock enable from 14.318 MHz (div by ~7)
-reg ce_2m;
-reg [2:0] div_2m;
-always @(posedge clk_sys) begin
-    div_2m <= div_2m + 1'd1;
-    if (div_2m == 6) div_2m <= 0;
-    ce_2m <= (div_2m == 0);
-end
-
-// Blanking counters at clk_sys with ce_2m (matching MiSTer)
-reg [15:0] vsync_ct, hsync_ct;
-reg        HBlank, VBlank_r;
-
-always @(posedge clk_sys) begin
-    reg old_hs, old_vs;
-    if (ce_2m) begin
-        hsync_ct <= hsync_ct + 1'd1;
-        old_hs <= hs;
-        if (old_hs & ~hs) begin
-            hsync_ct <= 0;
-            vsync_ct <= vsync_ct + 1'd1;
-            old_vs <= vs;
-            if (old_vs & ~vs) vsync_ct <= 0;
-        end
-        if (hsync_ct == 21)  HBlank <= 0;
-        if (hsync_ct == 100) HBlank <= 1;
-        if (vsync_ct == 34)  VBlank_r <= 0;
-        if (vsync_ct == 240) VBlank_r <= 1;
-    end
-end
-
-// Register video into clk_vid domain
+// Register video into clk_vid domain. Use the native blank/sync signals
+// exported by the Astrocade core instead of reconstructing them here.
 reg [7:0] vid_r, vid_g, vid_b;
 reg       vid_hs, vid_vs, vid_de;
 
 always @(posedge clk_vid) begin
-    vid_de <= ~HBlank & ~VBlank_r;
+    vid_de <= ~hblank_core & ~vblank_core;
     vid_hs <= !hs; // hs from BALLY is active low
     vid_vs <= !vs;
-    if (~HBlank & ~VBlank_r) begin
-        vid_r <= {R, R};
-        vid_g <= {G, G};
-        vid_b <= {B, B};
-    end else begin
-        vid_r <= 0; vid_g <= 0; vid_b <= 0;
-    end
+    vid_r  <= {R, R};
+    vid_g  <= {G, G};
+    vid_b  <= {B, B};
 end
 
-assign video_rgb = {vid_r, vid_g, vid_b};
+assign video_rgb = vid_de ? {vid_r, vid_g, vid_b} : 24'd0;
 assign video_de  = vid_de;
 assign video_vs  = vid_vs;
 assign video_hs  = vid_hs;
@@ -378,6 +344,7 @@ end
 wire [7:0] audio;
 wire [3:0] R, G, B;
 wire       hs, vs;
+wire       hblank_core, vblank_core;
 
 wire [12:0] cart_addr;
 wire  [7:0] cart_di, cart_do;
@@ -397,8 +364,8 @@ BALLY bally (
     .O_VIDEO_G     (G),
     .O_VIDEO_B     (B),
     .O_CE_PIX      (),
-    .O_HBLANK_V    (),
-    .O_VBLANK_V    (),
+    .O_HBLANK_V    (hblank_core),
+    .O_VBLANK_V    (vblank_core),
     .O_HSYNC       (hs),
     .O_VSYNC       (vs),
     .O_COMP_SYNC_L (),
@@ -432,12 +399,35 @@ BALLY bally (
 //  Input
 // ========================================================================
 
-// Map Pocket controllers to Astrocade joystick format
-// joya/b: [3:0]=R,L,D,U [4]=fire [5+]=keypad
-wire [31:0] joya = {27'd0, cont1_key[4], cont1_key[3], cont1_key[2], cont1_key[1], cont1_key[0]};
-wire [31:0] joyb = {27'd0, cont2_key[4], cont2_key[3], cont2_key[2], cont2_key[1], cont2_key[0]};
-wire [31:0] joyc = {27'd0, cont3_key[4], cont3_key[3], cont3_key[2], cont3_key[1], cont3_key[0]};
-wire [31:0] joyd = {27'd0, cont4_key[4], cont4_key[3], cont4_key[2], cont4_key[1], cont4_key[0]};
+// Map Pocket controllers to the MiSTer Astrocade input bitmap expected by
+// rtl/Astrocade_input.sv.
+function automatic [31:0] astrocade_joy(input [31:0] key_bits);
+begin
+    astrocade_joy = 32'd0;
+
+    // Joystick directions / trigger
+    astrocade_joy[0]  = key_bits[3];   // right
+    astrocade_joy[1]  = key_bits[2];   // left
+    astrocade_joy[2]  = key_bits[1];   // down
+    astrocade_joy[3]  = key_bits[0];   // up
+    astrocade_joy[4]  = key_bits[4];   // fire
+
+    // Practical keypad defaults on Pocket:
+    // B=CH, X=C, Y=CE, L=1, R=2, Select=3, Start=4.
+    astrocade_joy[6]  = key_bits[8];   // 1
+    astrocade_joy[7]  = key_bits[9];   // 2
+    astrocade_joy[8]  = key_bits[14];  // 3
+    astrocade_joy[9]  = key_bits[15];  // 4
+    astrocade_joy[15] = key_bits[5];   // CH
+    astrocade_joy[16] = key_bits[6];   // C
+    astrocade_joy[17] = key_bits[7];   // CE
+end
+endfunction
+
+wire [31:0] joya = astrocade_joy(cont1_key);
+wire [31:0] joyb = astrocade_joy(cont2_key);
+wire [31:0] joyc = astrocade_joy(cont3_key);
+wire [31:0] joyd = astrocade_joy(cont4_key);
 
 bally_input bally_input_inst (
     .clk_sys   (clk_sys),

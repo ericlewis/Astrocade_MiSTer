@@ -16,6 +16,18 @@ For the Analogue Pocket build, load the BIOS and cartridge as separate files:
 
 If you want one launchable Pocket instance that pre-selects both files, run `pocket/build_rom.sh boot.rom GAME.bin Astrocade.json` and place the generated instance JSON alongside the referenced files on the SD card.
 
+Default Pocket controls:
+
+* D-pad: joystick directions
+* `A`: trigger
+* `B`: `CH`
+* `X`: `C`
+* `Y`: `CE`
+* `L`: keypad `1`
+* `R`: keypad `2`
+* `Select`: keypad `3`
+* `Start`: keypad `4`
+
 ## Astrocade Controls
 The Astrocade had a very unusual controller. It was a gun-grip style handle with a joystick on the top, which had an integrated pot switch serving as a paddle control. This translates poorly to modern controllers. MiSTer only offers analog data for the first two axes of the controller, which is most often the left analog stick. For games which require paddle controls, directional movement, and the trigger button used together, I suggest mapping the controller such that the right analog stick is dpad motion, one of the shoulder buttons is the trigger button, and the left analog stick is the paddle.
 

@@ -9,7 +9,14 @@
           { "id": 1, "name": "Down", "key": "pad_btn_dpad_down" },
           { "id": 2, "name": "Left", "key": "pad_btn_dpad_left" },
           { "id": 3, "name": "Right", "key": "pad_btn_dpad_right" },
-          { "id": 4, "name": "Fire", "key": "pad_btn_a" }
+          { "id": 4, "name": "Fire", "key": "pad_btn_a" },
+          { "id": 5, "name": "CH", "key": "pad_btn_b" },
+          { "id": 6, "name": "C", "key": "pad_btn_x" },
+          { "id": 7, "name": "CE", "key": "pad_btn_y" },
+          { "id": 8, "name": "1", "key": "pad_trig_l" },
+          { "id": 9, "name": "2", "key": "pad_trig_r" },
+          { "id": 14, "name": "3", "key": "pad_btn_select" },
+          { "id": 15, "name": "4", "key": "pad_btn_start" }
         ]
       }
     ]
