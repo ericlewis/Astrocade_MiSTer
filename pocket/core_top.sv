@@ -258,7 +258,7 @@ wire clk_cpu_en = clk_cpu_ct[0];
 // ========================================================================
 
 reg [19:0] reset_counter = 20'd300000;
-wire reset = |reset_counter | downloading;
+wire reset = |reset_counter | downloading | clearing;
 
 always @(posedge clk_sys)
     if (downloading)
@@ -267,25 +267,41 @@ always @(posedge clk_sys)
         reset_counter <= reset_counter - 1'd1;
 
 // ========================================================================
-//  Video — dedicated pixel clock, no skip
+//  Video — pixel-stable direct output
 // ========================================================================
 
 assign video_rgb_clock    = clk_vid;
 assign video_rgb_clock_90 = clk_vid_90;
 assign video_skip = 1'b0;
 
-// Register video into clk_vid domain. Use the native blank/sync signals
-// exported by the Astrocade core instead of reconstructing them here.
-reg [7:0] vid_r, vid_g, vid_b;
-reg       vid_hs, vid_vs, vid_de;
+// Capture pixels in the core clock domain on the exact pixel strobe, then
+// present them from the 90-degree-shifted video clock so the RGB/sync outputs
+// are stable around the Pocket video clock edge.
+reg [3:0] pix_r_sys = 0, pix_g_sys = 0, pix_b_sys = 0;
+reg       pix_hs_sys = 0, pix_vs_sys = 0;
+reg       pix_hblank_sys = 1, pix_vblank_sys = 1;
+reg [7:0] vid_r = 0, vid_g = 0, vid_b = 0;
+reg       vid_hs = 0, vid_vs = 0, vid_de = 0;
 
-always @(posedge clk_vid) begin
-    vid_de <= ~hblank_core & ~vblank_core;
-    vid_hs <= !hs; // hs from BALLY is active low
-    vid_vs <= !vs;
-    vid_r  <= {R, R};
-    vid_g  <= {G, G};
-    vid_b  <= {B, B};
+always @(posedge clk_sys) begin
+    if (ce_pix_core) begin
+        pix_r_sys      <= R;
+        pix_g_sys      <= G;
+        pix_b_sys      <= B;
+        pix_hs_sys     <= hs;
+        pix_vs_sys     <= vs;
+        pix_hblank_sys <= hblank_core;
+        pix_vblank_sys <= vblank_core;
+    end
+end
+
+always @(posedge clk_vid_90) begin
+    vid_de <= ~pix_hblank_sys & ~pix_vblank_sys;
+    vid_hs <= ~pix_hs_sys;
+    vid_vs <= ~pix_vs_sys;
+    vid_r  <= {pix_r_sys, pix_r_sys};
+    vid_g  <= {pix_g_sys, pix_g_sys};
+    vid_b  <= {pix_b_sys, pix_b_sys};
 end
 
 assign video_rgb = vid_de ? {vid_r, vid_g, vid_b} : 24'd0;
@@ -345,6 +361,7 @@ wire [7:0] audio;
 wire [3:0] R, G, B;
 wire       hs, vs;
 wire       hblank_core, vblank_core;
+wire       ce_pix_core;
 
 wire [12:0] cart_addr;
 wire  [7:0] cart_di, cart_do;
@@ -363,7 +380,7 @@ BALLY bally (
     .O_VIDEO_R     (R),
     .O_VIDEO_G     (G),
     .O_VIDEO_B     (B),
-    .O_CE_PIX      (),
+    .O_CE_PIX      (ce_pix_core),
     .O_HBLANK_V    (hblank_core),
     .O_VBLANK_V    (vblank_core),
     .O_HSYNC       (hs),
@@ -401,15 +418,22 @@ BALLY bally (
 
 // Map Pocket controllers to the MiSTer Astrocade input bitmap expected by
 // rtl/Astrocade_input.sv.
-function automatic [31:0] astrocade_joy(input [31:0] key_bits);
+function automatic [31:0] astrocade_joy(input [31:0] key_bits, input [31:0] joy_bits);
+reg joy_right, joy_left, joy_down, joy_up;
 begin
     astrocade_joy = 32'd0;
 
+    // Treat both d-pad and left analog stick motion as joystick directions.
+    joy_right = key_bits[3] | (joy_bits[7:0]  > 8'hC0);
+    joy_left  = key_bits[2] | (joy_bits[7:0]  < 8'h40);
+    joy_down  = key_bits[1] | (joy_bits[15:8] > 8'hC0);
+    joy_up    = key_bits[0] | (joy_bits[15:8] < 8'h40);
+
     // Joystick directions / trigger
-    astrocade_joy[0]  = key_bits[3];   // right
-    astrocade_joy[1]  = key_bits[2];   // left
-    astrocade_joy[2]  = key_bits[1];   // down
-    astrocade_joy[3]  = key_bits[0];   // up
+    astrocade_joy[0]  = joy_right;     // right
+    astrocade_joy[1]  = joy_left;      // left
+    astrocade_joy[2]  = joy_down;      // down
+    astrocade_joy[3]  = joy_up;        // up
     astrocade_joy[4]  = key_bits[4];   // fire
 
     // Practical keypad defaults on Pocket:
@@ -424,10 +448,10 @@ begin
 end
 endfunction
 
-wire [31:0] joya = astrocade_joy(cont1_key);
-wire [31:0] joyb = astrocade_joy(cont2_key);
-wire [31:0] joyc = astrocade_joy(cont3_key);
-wire [31:0] joyd = astrocade_joy(cont4_key);
+wire [31:0] joya = astrocade_joy(cont1_key, cont1_joy);
+wire [31:0] joyb = astrocade_joy(cont2_key, cont2_joy);
+wire [31:0] joyc = astrocade_joy(cont3_key, cont3_joy);
+wire [31:0] joyd = astrocade_joy(cont4_key, cont4_joy);
 
 bally_input bally_input_inst (
     .clk_sys   (clk_sys),
@@ -490,12 +514,60 @@ reg dl_s0, dl_s1;
 always @(posedge clk_sys) begin dl_s0 <= ioctl_download; dl_s1 <= dl_s0; end
 wire downloading = dl_s1;
 
+// Clear each ROM slot before loading so smaller images don't inherit stale
+// bytes from a previous larger load.
+reg        load_req_toggle_74a = 0;
+reg  [1:0] load_slot_74a = 0;
+always @(posedge clk_74a) begin
+    if (dataslot_requestwrite) begin
+        load_req_toggle_74a <= ~load_req_toggle_74a;
+        load_slot_74a <= dataslot_requestwrite_id[1:0];
+    end
+end
+
+reg        load_req_s0 = 0, load_req_s1 = 0, load_req_prev = 0;
+reg  [1:0] load_slot_s0 = 0, load_slot_s1 = 0;
+reg        bios_clear = 0, cart_clear = 0;
+reg [12:0] bios_clear_addr = 13'h1FFF;
+reg [12:0] cart_clear_addr = 13'h1FFF;
+
+always @(posedge clk_sys) begin
+    load_req_s0 <= load_req_toggle_74a;
+    load_req_s1 <= load_req_s0;
+    load_req_prev <= load_req_s1;
+    load_slot_s0 <= load_slot_74a;
+    load_slot_s1 <= load_slot_s0;
+
+    if (load_req_s1 != load_req_prev) begin
+        if (load_slot_s1 == 2'd0) begin
+            bios_clear <= 1;
+            bios_clear_addr <= 13'h1FFF;
+        end
+        else if (load_slot_s1 == 2'd1) begin
+            cart_clear <= 1;
+            cart_clear_addr <= 13'h1FFF;
+        end
+    end
+
+    if (bios_clear) begin
+        if (bios_clear_addr == 13'd0) bios_clear <= 0;
+        else bios_clear_addr <= bios_clear_addr - 1'd1;
+    end
+
+    if (cart_clear) begin
+        if (cart_clear_addr == 13'd0) cart_clear <= 0;
+        else cart_clear_addr <= cart_clear_addr - 1'd1;
+    end
+end
+
+wire clearing = bios_clear | cart_clear;
+
 // Cartridge ROM (8KB)
 dpram #(13) rom (
     .clock     (clk_sys),
-    .address_a (cart_addr),
+    .address_a (cart_clear ? cart_clear_addr : cart_addr),
     .data_a    (8'h00),
-    .wren_a    (1'b0),
+    .wren_a    (cart_clear),
     .q_a       (cart_do),
     .address_b (dl_addr[12:0]),
     .data_b    (dl_data),
@@ -506,9 +578,9 @@ dpram #(13) rom (
 // BIOS ROM (8KB)
 dpram #(13) bios (
     .clock     (clk_sys),
-    .address_a (bios_addr_core),
+    .address_a (bios_clear ? bios_clear_addr : bios_addr_core),
     .data_a    (8'h00),
-    .wren_a    (1'b0),
+    .wren_a    (bios_clear),
     .q_a       (bios_do),
     .address_b (dl_addr[12:0]),
     .data_b    (dl_data),
