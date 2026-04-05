@@ -16,6 +16,8 @@ For the Analogue Pocket build, load the BIOS and cartridge as separate files:
 
 If you want one launchable Pocket instance that pre-selects both files, run `pocket/build_rom.sh boot.rom GAME.bin Astrocade.json` and place the generated instance JSON alongside the referenced files on the SD card.
 
+To stage the current Pocket package onto an SD card root after rebuilding the FPGA bitstream, run `pocket/stage_core.sh path/to/Astrocade_Pocket.rbf /path/to/SD_ROOT`. That copies the current `core.json`, `data.json`, `input.json`, `video.json`, and platform metadata together with a freshly generated `bitstream.rbf_r`.
+
 Default Pocket controls:
 
 * D-pad: joystick directions
