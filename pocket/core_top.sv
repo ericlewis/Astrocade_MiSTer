@@ -462,8 +462,8 @@ wire [7:0] pot_data =
 // ========================================================================
 
 // ROM loading via data_loader (agg23 utility)
-// Single slot: user provides concatenated BIOS(8KB) + Cart(8KB) file
-// First 8KB → BIOS dpram, remaining → Cart dpram
+// Slot 0 writes the 8KB BIOS at 0x20000000.
+// Slot 1 writes the 8KB cartridge at 0x20002000.
 always @(posedge clk_74a) begin
     target_dataslot_read <= 0; target_dataslot_write <= 0;
     target_dataslot_getfile <= 0; target_dataslot_openfile <= 0;
@@ -480,9 +480,15 @@ data_loader #(.ADDRESS_MASK_UPPER_4(4'h2), .ADDRESS_SIZE(28)) rom_loader (
     .write_en(dl_wr), .write_addr(dl_addr), .write_data(dl_data)
 );
 
-// Route by address: 0x0000-0x1FFF = BIOS, 0x2000+ = cart
-wire bios_wr_en = dl_wr & (dl_addr < 28'h2000);
-wire cart_wr_en = dl_wr & (dl_addr >= 28'h2000);
+localparam [27:0] BIOS_SIZE  = 28'h00002000;
+localparam [27:0] CART_BASE  = 28'h00002000;
+localparam [27:0] CART_LIMIT = 28'h00004000;
+
+// Route by address:
+//   0x0000-0x1FFF -> BIOS slot
+//   0x2000-0x3FFF -> cartridge slot
+wire bios_wr_en = dl_wr & (dl_addr < BIOS_SIZE);
+wire cart_wr_en = dl_wr & (dl_addr >= CART_BASE) & (dl_addr < CART_LIMIT);
 
 // Track download state
 reg ioctl_download = 0;
@@ -497,19 +503,27 @@ wire downloading = dl_s1;
 // Cartridge ROM (8KB)
 dpram #(13) rom (
     .clock     (clk_sys),
-    .address_a (downloading ? dl_addr[12:0] : cart_addr),
-    .data_a    (dl_data),
-    .wren_a    (cart_wr_en),
-    .q_a       (cart_do)
+    .address_a (cart_addr),
+    .data_a    (8'h00),
+    .wren_a    (1'b0),
+    .q_a       (cart_do),
+    .address_b (dl_addr[12:0]),
+    .data_b    (dl_data),
+    .wren_b    (cart_wr_en),
+    .q_b       ()
 );
 
 // BIOS ROM (8KB)
 dpram #(13) bios (
     .clock     (clk_sys),
-    .address_a (downloading ? dl_addr[12:0] : bios_addr_core),
-    .data_a    (dl_data),
-    .wren_a    (bios_wr_en),
-    .q_a       (bios_do)
+    .address_a (bios_addr_core),
+    .data_a    (8'h00),
+    .wren_a    (1'b0),
+    .q_a       (bios_do),
+    .address_b (dl_addr[12:0]),
+    .data_b    (dl_data),
+    .wren_b    (bios_wr_en),
+    .q_b       ()
 );
 
 endmodule
