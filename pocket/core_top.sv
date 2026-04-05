@@ -274,34 +274,19 @@ assign video_rgb_clock    = clk_sys;
 assign video_rgb_clock_90 = clk_vid_90;
 assign video_skip = 1'b0;
 
-// Capture pixels in the core clock domain on the exact pixel strobe, then
-// present them from the 90-degree-shifted video clock so the RGB/sync outputs
-// are stable around the Pocket video clock edge.
-reg [3:0] pix_r_sys = 0, pix_g_sys = 0, pix_b_sys = 0;
-reg       pix_hs_sys = 0, pix_vs_sys = 0;
-reg       pix_hblank_sys = 1, pix_vblank_sys = 1;
 reg [7:0] vid_r = 0, vid_g = 0, vid_b = 0;
 reg       vid_hs = 0, vid_vs = 0, vid_de = 0;
 
 always @(posedge clk_sys) begin
-    if (ce_pix_core) begin
-        pix_r_sys      <= R;
-        pix_g_sys      <= G;
-        pix_b_sys      <= B;
-        pix_hs_sys     <= hs;
-        pix_vs_sys     <= vs;
-        pix_hblank_sys <= hblank_core;
-        pix_vblank_sys <= vblank_core;
-    end
-end
-
-always @(posedge clk_vid_90) begin
-    vid_de <= ~pix_hblank_sys & ~pix_vblank_sys;
-    vid_hs <= pix_hs_sys;
-    vid_vs <= pix_vs_sys;
-    vid_r  <= {pix_r_sys, pix_r_sys};
-    vid_g  <= {pix_g_sys, pix_g_sys};
-    vid_b  <= {pix_b_sys, pix_b_sys};
+    // The Astrocade core already repeats low-res pixels across multiple core
+    // clocks. Drive Pocket video from the core clock directly so sync/blanking
+    // edges stay aligned even when O_CE_PIX is not asserted every cycle.
+    vid_de <= ~hblank_core & ~vblank_core;
+    vid_hs <= hs;
+    vid_vs <= vs;
+    vid_r  <= {R, R};
+    vid_g  <= {G, G};
+    vid_b  <= {B, B};
 end
 
 assign video_rgb = vid_de ? {vid_r, vid_g, vid_b} : 24'd0;
