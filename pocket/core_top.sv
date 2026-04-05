@@ -297,8 +297,8 @@ end
 
 always @(posedge clk_vid_90) begin
     vid_de <= ~pix_hblank_sys & ~pix_vblank_sys;
-    vid_hs <= ~pix_hs_sys;
-    vid_vs <= ~pix_vs_sys;
+    vid_hs <= pix_hs_sys;
+    vid_vs <= pix_vs_sys;
     vid_r  <= {pix_r_sys, pix_r_sys};
     vid_g  <= {pix_g_sys, pix_g_sys};
     vid_b  <= {pix_b_sys, pix_b_sys};
