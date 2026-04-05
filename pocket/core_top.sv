@@ -233,8 +233,8 @@ core_bridge_cmd icb (
 // ========================================================================
 
 wire clk_sys;     // 14.318 MHz
-wire clk_vid;     // 7.159 MHz (pixel clock)
-wire clk_vid_90;  // 7.159 MHz 90°
+wire clk_vid;     // 14.318 MHz duplicate phase-aligned clock (PLL template output)
+wire clk_vid_90;  // 14.318 MHz 90°
 
 pll pll_inst (
     .refclk   (clk_74a),
@@ -261,7 +261,7 @@ reg [19:0] reset_counter = 20'd300000;
 wire reset = |reset_counter | downloading | clearing;
 
 always @(posedge clk_sys)
-    if (downloading)
+    if (downloading || clearing)
         reset_counter <= 20'd300000;
     else if (reset_counter)
         reset_counter <= reset_counter - 1'd1;
@@ -270,7 +270,7 @@ always @(posedge clk_sys)
 //  Video — pixel-stable direct output
 // ========================================================================
 
-assign video_rgb_clock    = clk_vid;
+assign video_rgb_clock    = clk_sys;
 assign video_rgb_clock_90 = clk_vid_90;
 assign video_skip = 1'b0;
 
@@ -504,58 +504,69 @@ localparam [27:0] CART_LIMIT = 28'h00004000;
 wire bios_wr_en = dl_wr & (dl_addr < BIOS_SIZE);
 wire cart_wr_en = dl_wr & (dl_addr >= CART_BASE) & (dl_addr < CART_LIMIT);
 
-// Track download state
-reg ioctl_download = 0;
+// Track download state and clear any unused ROM tail after a load completes so
+// smaller images don't inherit bytes from a previous larger file.
+reg        ioctl_download = 0;
+reg  [1:0] load_slot_74a = 0;
+reg [13:0] load_size_74a = 14'd0;
+reg        load_done_toggle_74a = 0;
+reg  [1:0] load_done_slot_74a = 0;
+reg [13:0] load_done_size_74a = 14'd0;
+
 always @(posedge clk_74a) begin
-    if (dataslot_requestwrite) ioctl_download <= 1;
-    if (dataslot_allcomplete)  ioctl_download <= 0;
+    if (dataslot_requestwrite) begin
+        ioctl_download <= 1;
+        load_slot_74a <= dataslot_requestwrite_id[1:0];
+        load_size_74a <= (dataslot_requestwrite_size >= 32'd8192) ? 14'd8192 : dataslot_requestwrite_size[13:0];
+    end
+    if (dataslot_allcomplete) begin
+        ioctl_download <= 0;
+        load_done_toggle_74a <= ~load_done_toggle_74a;
+        load_done_slot_74a <= load_slot_74a;
+        load_done_size_74a <= load_size_74a;
+    end
 end
+
 reg dl_s0, dl_s1;
 always @(posedge clk_sys) begin dl_s0 <= ioctl_download; dl_s1 <= dl_s0; end
 wire downloading = dl_s1;
 
-// Clear each ROM slot before loading so smaller images don't inherit stale
-// bytes from a previous larger load.
-reg        load_req_toggle_74a = 0;
-reg  [1:0] load_slot_74a = 0;
-always @(posedge clk_74a) begin
-    if (dataslot_requestwrite) begin
-        load_req_toggle_74a <= ~load_req_toggle_74a;
-        load_slot_74a <= dataslot_requestwrite_id[1:0];
-    end
-end
-
-reg        load_req_s0 = 0, load_req_s1 = 0, load_req_prev = 0;
-reg  [1:0] load_slot_s0 = 0, load_slot_s1 = 0;
+reg        load_done_s0 = 0, load_done_s1 = 0, load_done_prev = 0;
+reg  [1:0] load_done_slot_s0 = 0, load_done_slot_s1 = 0;
+reg [13:0] load_done_size_s0 = 0, load_done_size_s1 = 0;
 reg        bios_clear = 0, cart_clear = 0;
-reg [12:0] bios_clear_addr = 13'h1FFF;
-reg [12:0] cart_clear_addr = 13'h1FFF;
+reg [12:0] bios_clear_addr = 13'h1FFF, bios_clear_limit = 13'h1FFF;
+reg [12:0] cart_clear_addr = 13'h1FFF, cart_clear_limit = 13'h1FFF;
 
 always @(posedge clk_sys) begin
-    load_req_s0 <= load_req_toggle_74a;
-    load_req_s1 <= load_req_s0;
-    load_req_prev <= load_req_s1;
-    load_slot_s0 <= load_slot_74a;
-    load_slot_s1 <= load_slot_s0;
+    load_done_s0 <= load_done_toggle_74a;
+    load_done_s1 <= load_done_s0;
+    load_done_prev <= load_done_s1;
+    load_done_slot_s0 <= load_done_slot_74a;
+    load_done_slot_s1 <= load_done_slot_s0;
+    load_done_size_s0 <= load_done_size_74a;
+    load_done_size_s1 <= load_done_size_s0;
 
-    if (load_req_s1 != load_req_prev) begin
-        if (load_slot_s1 == 2'd0) begin
+    if (load_done_s1 != load_done_prev) begin
+        if (load_done_slot_s1 == 2'd0 && load_done_size_s1 < 14'd8192) begin
             bios_clear <= 1;
             bios_clear_addr <= 13'h1FFF;
+            bios_clear_limit <= load_done_size_s1[12:0];
         end
-        else if (load_slot_s1 == 2'd1) begin
+        else if (load_done_slot_s1 == 2'd1 && load_done_size_s1 < 14'd8192) begin
             cart_clear <= 1;
             cart_clear_addr <= 13'h1FFF;
+            cart_clear_limit <= load_done_size_s1[12:0];
         end
     end
 
     if (bios_clear) begin
-        if (bios_clear_addr == 13'd0) bios_clear <= 0;
+        if (bios_clear_addr == bios_clear_limit) bios_clear <= 0;
         else bios_clear_addr <= bios_clear_addr - 1'd1;
     end
 
     if (cart_clear) begin
-        if (cart_clear_addr == 13'd0) cart_clear <= 0;
+        if (cart_clear_addr == cart_clear_limit) cart_clear <= 0;
         else cart_clear_addr <= cart_clear_addr - 1'd1;
     end
 end

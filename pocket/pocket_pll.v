@@ -3,8 +3,8 @@
 // Input: 74.25 MHz
 // Outputs:
 //   outclk_0: 14.31818 MHz  (clk_sys — system clock)
-//   outclk_1: 7.15909 MHz   (clk_vid — pixel clock for scaler)
-//   outclk_2: 7.15909 MHz   (clk_vid_90 — pixel clock 90° for DDR)
+//   outclk_1: 14.31818 MHz  (clk_vid — video output clock)
+//   outclk_2: 14.31818 MHz  (clk_vid_90 — video output clock 90° for DDR)
 
 `timescale 1 ps / 1 ps
 
@@ -25,11 +25,11 @@ altera_pll #(
     .output_clock_frequency0   ("14.31818 MHz"),
     .phase_shift0              ("0 ps"),
     .duty_cycle0               (50),
-    .output_clock_frequency1   ("7.15909 MHz"),
+    .output_clock_frequency1   ("14.31818 MHz"),
     .phase_shift1              ("0 ps"),
     .duty_cycle1               (50),
-    .output_clock_frequency2   ("7.15909 MHz"),
-    .phase_shift2              ("34917 ps"),
+    .output_clock_frequency2   ("14.31818 MHz"),
+    .phase_shift2              ("17458 ps"),
     .duty_cycle2               (50),
     .pll_type                  ("General"),
     .pll_subtype               ("General")
