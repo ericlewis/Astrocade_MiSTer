@@ -258,10 +258,10 @@ wire clk_cpu_en = clk_cpu_ct[0];
 // ========================================================================
 
 reg [19:0] reset_counter = 20'd300000;
-wire reset = |reset_counter | downloading | clearing;
+wire reset = |reset_counter | downloading;
 
 always @(posedge clk_sys)
-    if (downloading || clearing)
+    if (downloading)
         reset_counter <= 20'd300000;
     else if (reset_counter)
         reset_counter <= reset_counter - 1'd1;
@@ -465,8 +465,7 @@ localparam [27:0] CART_LIMIT = 28'h00004000;
 wire bios_wr_en = dl_wr & (dl_addr < BIOS_SIZE);
 wire cart_wr_en = dl_wr & (dl_addr >= CART_BASE) & (dl_addr < CART_LIMIT);
 
-// Track download state and clear any unused ROM tail after a load completes so
-// smaller images don't inherit bytes from a previous larger file.
+// Track download state and update cartridge mirroring after a load completes.
 reg        ioctl_download = 0;
 reg  [1:0] load_slot_74a = 0;
 reg [13:0] load_size_74a = 14'd0;
@@ -495,9 +494,7 @@ wire downloading = dl_s1;
 reg        load_done_s0 = 0, load_done_s1 = 0, load_done_prev = 0;
 reg  [1:0] load_done_slot_s0 = 0, load_done_slot_s1 = 0;
 reg [13:0] load_done_size_s0 = 0, load_done_size_s1 = 0;
-reg        bios_clear = 0, cart_clear = 0;
-reg [12:0] bios_clear_addr = 13'h1FFF, bios_clear_limit = 13'h1FFF;
-reg [12:0] cart_clear_addr = 13'h1FFF, cart_clear_limit = 13'h1FFF;
+reg [12:0] cart_addr_mask = 13'h1FFF;
 
 always @(posedge clk_sys) begin
     load_done_s0 <= load_done_toggle_74a;
@@ -509,37 +506,22 @@ always @(posedge clk_sys) begin
     load_done_size_s1 <= load_done_size_s0;
 
     if (load_done_s1 != load_done_prev) begin
-        if (load_done_slot_s1 == 2'd0 && load_done_size_s1 < 14'd8192) begin
-            bios_clear <= 1;
-            bios_clear_addr <= 13'h1FFF;
-            bios_clear_limit <= load_done_size_s1[12:0];
+        if (load_done_slot_s1 == 2'd1) begin
+            if (load_done_size_s1 <= 14'd2048)      cart_addr_mask <= 13'h07FF;
+            else if (load_done_size_s1 <= 14'd4096) cart_addr_mask <= 13'h0FFF;
+            else                                    cart_addr_mask <= 13'h1FFF;
         end
-        else if (load_done_slot_s1 == 2'd1 && load_done_size_s1 < 14'd8192) begin
-            cart_clear <= 1;
-            cart_clear_addr <= 13'h1FFF;
-            cart_clear_limit <= load_done_size_s1[12:0];
-        end
-    end
-
-    if (bios_clear) begin
-        if (bios_clear_addr == bios_clear_limit) bios_clear <= 0;
-        else bios_clear_addr <= bios_clear_addr - 1'd1;
-    end
-
-    if (cart_clear) begin
-        if (cart_clear_addr == cart_clear_limit) cart_clear <= 0;
-        else cart_clear_addr <= cart_clear_addr - 1'd1;
     end
 end
 
-wire clearing = bios_clear | cart_clear;
+wire [12:0] cart_read_addr = cart_addr & cart_addr_mask;
 
 // Cartridge ROM (8KB)
 dpram #(13) rom (
     .clock     (clk_sys),
-    .address_a (cart_clear ? cart_clear_addr : cart_addr),
+    .address_a (cart_read_addr),
     .data_a    (8'h00),
-    .wren_a    (cart_clear),
+    .wren_a    (1'b0),
     .q_a       (cart_do),
     .address_b (dl_addr[12:0]),
     .data_b    (dl_data),
@@ -550,9 +532,9 @@ dpram #(13) rom (
 // BIOS ROM (8KB)
 dpram #(13) bios (
     .clock     (clk_sys),
-    .address_a (bios_clear ? bios_clear_addr : bios_addr_core),
+    .address_a (bios_addr_core),
     .data_a    (8'h00),
-    .wren_a    (bios_clear),
+    .wren_a    (1'b0),
     .q_a       (bios_do),
     .address_b (dl_addr[12:0]),
     .data_b    (dl_data),
