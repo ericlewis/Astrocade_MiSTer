@@ -298,55 +298,31 @@ assign video_hs  = vid_hs;
 //  Audio — 8-bit mono → I2S
 // ========================================================================
 
-assign audio_mclk = audgen_mclk;
-assign audio_dac  = audgen_dac;
-assign audio_lrck = audgen_lrck;
-
-reg  [21:0] audgen_accum;
-reg         audgen_mclk;
-parameter [20:0] CYCLE_48KHZ = 21'd122880 * 2;
-
-always @(posedge clk_74a) begin
-    audgen_accum <= audgen_accum + CYCLE_48KHZ;
-    if (audgen_accum >= 21'd742500) begin
-        audgen_mclk  <= ~audgen_mclk;
-        audgen_accum <= audgen_accum - 21'd742500 + CYCLE_48KHZ;
-    end
-end
-
-reg [1:0] aud_mclk_divider;
-wire      audgen_sclk = aud_mclk_divider[1];
-always @(posedge audgen_mclk) aud_mclk_divider <= aud_mclk_divider + 1'b1;
-
-reg  [4:0]  audgen_lrck_cnt;
-reg         audgen_lrck;
-reg         audgen_dac;
-reg  [15:0] audgen_shift;
-
-// Expand 8-bit unsigned mono to 16-bit signed
-reg [15:0] aud_sample;
-always @(posedge clk_74a) begin
-    // audio is 8-bit unsigned — convert to 16-bit signed
-    aud_sample <= {~audio[7], audio[6:0], audio};
-end
-
-always @(negedge audgen_sclk) begin
-    audgen_lrck_cnt <= audgen_lrck_cnt + 1'b1;
-    if (audgen_lrck_cnt == 5'd31) audgen_lrck <= ~audgen_lrck;
-    if (audgen_lrck_cnt == 5'd0)  audgen_shift <= aud_sample;
-    audgen_dac   <= audgen_shift[15];
-    audgen_shift <= {audgen_shift[14:0], 1'b0};
-end
-
-// ========================================================================
-//  BALLY Astrocade Core
-// ========================================================================
-
 wire [7:0] audio;
 wire [3:0] R, G, B;
 wire       hs, vs;
 wire       hblank_core, vblank_core;
 wire       ce_pix_core;
+
+// Expand 8-bit unsigned mono to 16-bit signed
+wire [15:0] aud_sample = {~audio[7], audio[6:0], audio};
+
+sound_i2s #(
+    .CHANNEL_WIDTH(16),
+    .SIGNED_INPUT(1)
+) sound_i2s_inst (
+    .clk_74a   (clk_74a),
+    .clk_audio (clk_sys),
+    .audio_l   (aud_sample),
+    .audio_r   (aud_sample),
+    .audio_mclk(audio_mclk),
+    .audio_lrck(audio_lrck),
+    .audio_dac (audio_dac)
+);
+
+// ========================================================================
+//  BALLY Astrocade Core
+// ========================================================================
 
 wire [12:0] cart_addr;
 wire  [7:0] cart_di, cart_do;
