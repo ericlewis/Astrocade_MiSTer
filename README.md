@@ -11,7 +11,7 @@ Copy the Astrocade_\*.rbf file to the root of the SD card. Create an **Astrocade
 
 For the Analogue Pocket build, load the BIOS and cartridge as separate files:
 
-* Slot `BIOS`: `boot.rom` (`.rom`/`.bin`, 8KB max)
+* Slot `BIOS`: `boot.rom` in `/Assets/astrocade/common` (`.rom`/`.bin`, 8KB max)
 * Slot `Cartridge`: game ROM (`.rom`/`.bin`, 8KB max)
 
 If you want one launchable Pocket instance that pre-selects both files, run `pocket/build_rom.sh boot.rom GAME.bin Astrocade.json` and place the generated instance JSON alongside the referenced files on the SD card.

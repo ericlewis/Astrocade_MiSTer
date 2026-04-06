@@ -6,7 +6,7 @@
         "id": 0,
         "name": "BIOS",
         "required": true,
-        "parameters": "0x2",
+        "parameters": "0x0",
         "extensions": ["bin", "rom"],
         "filename": "boot.rom",
         "address": "0x20000000",
